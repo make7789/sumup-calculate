@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>年度综合考核评价系统-增强修复版</title>
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background-color: #f4f7f9; margin: 0; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; background: #fff; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        h2 { color: #1a73e8; text-align: center; margin-bottom: 20px; }
+
+        .toolbar { display: flex; justify-content: space-between; align-items: center; background: #fff; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; margin-bottom: 20px; gap: 10px; flex-wrap: wrap; }
+        .btn-group { display: flex; gap: 10px; }
+        .btn { padding: 10px 18px; cursor: pointer; border: none; border-radius: 6px; font-weight: bold; transition: 0.2s; font-size: 14px; }
+        .btn-template { background: #6c757d; color: white; }
+        .btn-import { background: #28a745; color: white; }
+        .btn-calc { background: #007bff; color: white; border: 2px solid #0056b3; }
+        .btn-export { background: #ffc107; color: #212529; }
+        .btn:hover { opacity: 0.9; transform: translateY(-1px); }
+
+        .table-container { overflow-x: auto; border-radius: 8px; border: 1px solid #dee2e6; background: #fff; }
+        table { width: 100%; border-collapse: collapse; min-width: 1100px; }
+        th { background: #f8f9fa; color: #495057; padding: 12px; border-bottom: 2px solid #dee2e6; text-align: center; white-space: nowrap; }
+        td { padding: 8px; border: 1px solid #eee; text-align: center; }
+
+        input { width: 85%; padding: 6px; border: 1px solid #ccc; border-radius: 4px; text-align: center; font-size: 14px; }
+        input:focus { border-color: #007bff; outline: none; background: #f1f8ff; }
+        .res-input { font-weight: bold; color: #d93025; background: #fff9f9; border: 1px solid #ffdada; }
+
+        .status { margin-top: 15px; padding: 10px; border-radius: 4px; font-size: 14px; background: #e9ecef; color: #495057; }
+        .tip { color: #666; font-size: 12px; margin-top: 5px; line-height: 1.5; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>年度综合考核评价自动计算器 (v2.0)</h2>
+
+    <div class="toolbar">
+        <div>
+            <strong>考核维度配置：</strong>
+            <select id="calcType" style="padding: 8px; border-radius: 4px; border: 1px solid #ccc;">
+                <option value="group">领导班子 (30%:40%:20%:10%)</option>
+                <option value="individual">领导人员 (30%:40%:20%:10%)</option>
+            </select>
+        </div>
+        <div class="btn-group">
+            <button class="btn btn-template" onclick="downloadTemplate()">1. 下载模板</button>
+            <button class="btn btn-import" onclick="document.getElementById('fileInput').click()">2. 导入原始数据</button>
+            <input type="file" id="fileInput" hidden accept=".xlsx, .xls, .csv" onchange="importExcel(this)">
+            <button class="btn btn-calc" onclick="calculate()">3. 批量一键计算</button>
+            <button class="btn btn-export" onclick="exportExcel()">4. 导出计算结果</button>
+        </div>
+    </div>
+
+    <div class="table-container">
+        <table id="mainTable">
+            <thead>
+            <tr>
+                <th>名称/姓名</th>
+                <th>民主测评得分</th>
+                <th>测评排名变化</th>
+                <th>业绩/对标得分</th>
+                <th>实绩测评得分(副职填)</th>
+                <th>业绩排名变化</th>
+                <th>领导评价得分</th>
+                <th>部门评价得分</th>
+                <th>综合总得分</th>
+            </tr>
+            </thead>
+            <tbody id="tableBody">
+            </tbody>
+        </table>
+    </div>
+
+    <div class="status" id="statusBar">等待操作...</div>
+    <div class="tip">
+        ※ <b>说明</b>：排名变化：进步填正数（如 2），退步填负数（如 -1）。<br>
+        ※ <b>个人计算逻辑</b>：业绩项 = (经营业绩*60% + 实绩测评*40%)，再根据排名变化计算成长性。
+    </div>
+</div>
+
+<script>
+    // 表头定义（用于导出）
+    const headerLabels = ["名称/姓名", "民主测评得分", "测评排名变化", "业绩/对标得分", "实绩测评得分", "业绩排名变化", "领导评价得分", "部门评价得分", "综合总得分"];
+
+    // 1. 下载模板
+    function downloadTemplate() {
+        const data = [
+            headerLabels.slice(0, 8), // 只要前8列
+            ["示例对象1", 90, 2, 88, 85, 1, 95, 90],
+            ["示例对象2", 85, -1, 92, 90, 0, 80, 85]
+        ];
+        const ws = XLSX.utils.aoa_to_sheet(data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "模板");
+        XLSX.writeFile(wb, "考核数据导入模板.xlsx");
+    }
+
+    // 2. 导入 Excel
+    function importExcel(input) {
+        if (!input.files[0]) return;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+            const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+
+            // 过滤掉第一行表头
+            renderTable(rows.slice(1));
+            document.getElementById('statusBar').innerText = `已成功导入 ${rows.length - 1} 条数据`;
+        };
+        reader.readAsArrayBuffer(input.files[0]);
+    }
+
+    function renderTable(data) {
+        const tbody = document.getElementById('tableBody');
+        tbody.innerHTML = '';
+        data.forEach(rowData => {
+            if (rowData.length === 0) return;
+            const tr = document.createElement('tr');
+            // 循环前8个输入字段
+            for (let i = 0; i < 8; i++) {
+                const td = document.createElement('td');
+                const val = rowData[i] === undefined ? "" : rowData[i];
+                td.innerHTML = `<input type="text" class="cell-input" value="${val}">`;
+                tr.appendChild(td);
+            }
+            // 结果列
+            const resTd = document.createElement('td');
+            resTd.innerHTML = `<input type="text" class="res-input" readonly value="-">`;
+            tr.appendChild(resTd);
+            tbody.appendChild(tr);
+        });
+    }
+
+    // 3. 计算逻辑
+    function calculate() {
+        const type = document.getElementById('calcType').value;
+        const rows = document.querySelectorAll('#tableBody tr');
+        let count = 0;
+
+        rows.forEach(row => {
+            const inputs = row.querySelectorAll('.cell-input');
+            const getVal = (idx) => parseFloat(inputs[idx].value) || 0;
+
+            // 提取基础值
+            const name = inputs[0].value;
+            const demScore = getVal(1);
+            const demRankChg = getVal(2);
+            const perfScore = getVal(3);
+            const actScore = getVal(4);
+            const perfRankChg = getVal(5);
+            const leaderScore = getVal(6);
+            const deptScore = getVal(7);
+
+            if (!name) return;
+
+            // --- A. 考核测评得分 (30%) ---
+            let part1 = (demScore + (demScore * demRankChg * 0.0025)) * 0.3;
+
+            // --- B. 业绩评价得分 (40%) ---
+            let part2 = 0;
+            if (type === 'group') {
+                // 班子：业绩 * (1 + 排名变化*0.25%)
+                part2 = (perfScore + (perfScore * perfRankChg * 0.0025)) * 0.4;
+            } else {
+                // 个人：(业绩*0.6 + 实绩*0.4) * (1 + 排名变化*0.25%)
+                let combinedPerf = (perfScore * 0.6) + (actScore * 0.4);
+                part2 = (combinedPerf + (combinedPerf * perfRankChg * 0.0025)) * 0.4;
+            }
+
+            // --- C. 领导评价 (20%) + D. 部门评价 (10%) ---
+            let part3 = leaderScore * 0.2;
+            let part4 = deptScore * 0.1;
+
+            const finalResult = (part1 + part2 + part3 + part4).toFixed(3);
+            row.querySelector('.res-input').value = finalResult;
+            count++;
+        });
+
+        document.getElementById('statusBar').innerText = `计算完成！已处理 ${count} 项数据。`;
+    }
+
+    // 4. 导出结果 (关键修复：手动读取输入框的值)
+    function exportExcel() {
+        const rowsData = [];
+        // 添加表头
+        rowsData.push(headerLabels);
+
+        // 遍历所有行，手动取 input 里的当前值
+        const tableRows = document.querySelectorAll('#tableBody tr');
+        if (tableRows.length === 0) {
+            alert("没有可导出的数据！");
+            return;
+        }
+
+        tableRows.forEach(row => {
+            const rowValues = [];
+            const allInputs = row.querySelectorAll('input');
+            allInputs.forEach(input => {
+                rowValues.push(input.value);
+            });
+            rowsData.push(rowValues);
+        });
+
+        const ws = XLSX.utils.aoa_to_sheet(rowsData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "考核结果");
+
+        // 生成文件名：结果_时间戳.xlsx
+        const fileName = "考核评价结果_" + new Date().getTime() + ".xlsx";
+        XLSX.writeFile(wb, fileName);
+    }
+
+    // 初始化一个空行
+    renderTable([["", "", "", "", "", "", "", ""]]);
+</script>
+
+</body>
+</html>
